@@ -70,7 +70,7 @@ final class CompanionManager: ObservableObject {
 
     /// Base URL for the Cloudflare Worker proxy. All API requests route
     /// through this so keys never ship in the app binary.
-    private static let workerBaseURL = "https://your-worker-name.your-subdomain.workers.dev"
+    private static let workerBaseURL = "https://clicky-proxy.farza-0cb.workers.dev"
 
     private lazy var claudeAPI: ClaudeAPI = {
         return ClaudeAPI(proxyURL: "\(Self.workerBaseURL)/chat", model: selectedModel)
@@ -96,6 +96,10 @@ final class CompanionManager: ObservableObject {
     /// Scheduled hide for transient cursor mode — cancelled if the user
     /// speaks again before the delay elapses.
     private var transientHideTask: Task<Void, Never>?
+
+    /// Timestamp when the user released the push-to-talk key, used to measure
+    /// how long transcription finalization takes.
+    private var pushToTalkReleaseTime: CFAbsoluteTime?
 
     /// True when all three required permissions (accessibility, screen recording,
     /// microphone) are granted. Used by the panel to show a single "all good" state.
@@ -436,9 +440,13 @@ final class CompanionManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isRecording, isFinalizing, isPreparing in
                 guard let self else { return }
-                // Don't override .responding — the AI response pipeline
-                // manages that state directly until streaming finishes.
-                guard self.voiceState != .responding else { return }
+                // Don't override .responding or .processing while the AI
+                // response pipeline is running — it manages those states
+                // directly until TTS finishes.
+                if self.currentResponseTask != nil
+                    && (self.voiceState == .responding || self.voiceState == .processing) {
+                    return
+                }
 
                 if isFinalizing {
                     self.voiceState = .processing
@@ -519,6 +527,10 @@ final class CompanionManager: ObservableObject {
                     },
                     submitDraftText: { [weak self] finalTranscript in
                         self?.lastTranscript = finalTranscript
+                        if let releaseTime = self?.pushToTalkReleaseTime {
+                            let transcribeDurationMilliseconds = Int((CFAbsoluteTimeGetCurrent() - releaseTime) * 1000)
+                            print("⏱️ Transcription finalized in \(transcribeDurationMilliseconds)ms")
+                        }
                         print("🗣️ Companion received transcript: \(finalTranscript)")
                         ClickyAnalytics.trackUserMessageSent(transcript: finalTranscript)
                         self?.sendTranscriptToClaudeWithScreenshot(transcript: finalTranscript)
@@ -531,6 +543,7 @@ final class CompanionManager: ObservableObject {
             // Without this, a quick press-and-release drops the release event and
             // leaves the waveform overlay stuck on screen indefinitely.
             ClickyAnalytics.trackPushToTalkReleased()
+            pushToTalkReleaseTime = CFAbsoluteTimeGetCurrent()
             pendingKeyboardShortcutStartTask?.cancel()
             pendingKeyboardShortcutStartTask = nil
             buddyDictationManager.stopPushToTalkFromKeyboardShortcut()
@@ -590,10 +603,13 @@ final class CompanionManager: ObservableObject {
         currentResponseTask = Task {
             // Stay in processing (spinner) state — no streaming text displayed
             voiceState = .processing
+            let pipelineStartTime = CFAbsoluteTimeGetCurrent()
 
             do {
                 // Capture all connected screens so the AI has full context
+                let screenshotStartTime = CFAbsoluteTimeGetCurrent()
                 let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
+                let screenshotDurationMilliseconds = Int((CFAbsoluteTimeGetCurrent() - screenshotStartTime) * 1000)
 
                 guard !Task.isCancelled else { return }
 
@@ -610,6 +626,7 @@ final class CompanionManager: ObservableObject {
                     (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
                 }
 
+                let claudeStartTime = CFAbsoluteTimeGetCurrent()
                 let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
                     images: labeledImages,
                     systemPrompt: Self.companionVoiceResponseSystemPrompt,
@@ -619,6 +636,7 @@ final class CompanionManager: ObservableObject {
                         // No streaming text display — spinner stays until TTS plays
                     }
                 )
+                let claudeDurationMilliseconds = Int((CFAbsoluteTimeGetCurrent() - claudeStartTime) * 1000)
 
                 guard !Task.isCancelled else { return }
 
@@ -701,9 +719,14 @@ final class CompanionManager: ObservableObject {
                 // until the audio actually starts playing, then switch to responding.
                 if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     do {
+                        let ttsStartTime = CFAbsoluteTimeGetCurrent()
                         try await elevenLabsTTSClient.speakText(spokenText)
+                        let ttsDurationMilliseconds = Int((CFAbsoluteTimeGetCurrent() - ttsStartTime) * 1000)
                         // speakText returns after player.play() — audio is now playing
                         voiceState = .responding
+
+                        let totalPipelineDurationMilliseconds = Int((CFAbsoluteTimeGetCurrent() - pipelineStartTime) * 1000)
+                        print("⏱️ Pipeline timing — Screenshot: \(screenshotDurationMilliseconds)ms | Claude: \(claudeDurationMilliseconds)ms | TTS: \(ttsDurationMilliseconds)ms | Total: \(totalPipelineDurationMilliseconds)ms")
                     } catch {
                         ClickyAnalytics.trackTTSError(error: error.localizedDescription)
                         print("⚠️ ElevenLabs TTS error: \(error)")
@@ -720,6 +743,7 @@ final class CompanionManager: ObservableObject {
 
             if !Task.isCancelled {
                 voiceState = .idle
+                currentResponseTask = nil
                 scheduleTransientHideIfNeeded()
             }
         }

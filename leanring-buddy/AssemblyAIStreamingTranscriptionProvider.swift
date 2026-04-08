@@ -19,7 +19,7 @@ struct AssemblyAIStreamingTranscriptionProviderError: LocalizedError {
 final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider {
     /// URL for the Cloudflare Worker endpoint that returns a short-lived
     /// AssemblyAI streaming token. The real API key never leaves the server.
-    private static let tokenProxyURL = "https://your-worker-name.your-subdomain.workers.dev/transcribe-token"
+    private static let tokenProxyURL = "https://clicky-proxy.farza-0cb.workers.dev/transcribe-token"
 
     let displayName = "AssemblyAI"
     let requiresSpeechRecognitionPermission = false
@@ -28,10 +28,9 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
     var unavailableExplanation: String? { nil }
 
     /// Single long-lived URLSession shared across all streaming sessions.
-    /// Creating and invalidating a URLSession per session corrupts the OS
-    /// connection pool and causes "Socket is not connected" errors after
-    /// a few rapid reconnections to the same host.
-    private let sharedWebSocketURLSession = URLSession(configuration: .default)
+    /// Replaced when the connection pool gets poisoned from rapid
+    /// cancel/reconnect cycles ("Socket is not connected" errors).
+    private var sharedWebSocketURLSession = URLSession(configuration: .default)
 
     func startStreamingSession(
         keyterms: [String],
@@ -39,7 +38,6 @@ final class AssemblyAIStreamingTranscriptionProvider: BuddyTranscriptionProvider
         onFinalTranscriptReady: @escaping (String) -> Void,
         onError: @escaping (Error) -> Void
     ) async throws -> any BuddyStreamingTranscriptionSession {
-        // Fetch a fresh temporary token from the proxy before each session
         let temporaryToken = try await fetchTemporaryToken()
         print("🎙️ AssemblyAI: fetched temporary token (\(temporaryToken.prefix(20))...)")
 
@@ -179,16 +177,35 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
         }
     }
 
+    private var totalAudioBytesSent = 0
+    private var totalAudioChunksSent = 0
+    private var hasLoggedFirstAudioChunk = false
+
     func appendAudioBuffer(_ audioBuffer: AVAudioPCMBuffer) {
         guard let audioPCM16Data = audioPCM16Converter.convertToPCM16Data(from: audioBuffer),
               !audioPCM16Data.isEmpty else {
             return
         }
 
+        // Check if the audio contains actual sound (not silence)
+        let samples = audioPCM16Data.withUnsafeBytes { buffer in
+            Array(buffer.bindMemory(to: Int16.self))
+        }
+        let peakAmplitude = samples.map { abs(Int32($0)) }.max() ?? 0
+
         sendQueue.async { [weak self] in
             guard let self, let webSocketTask = self.webSocketTask else { return }
+            self.totalAudioBytesSent += audioPCM16Data.count
+            self.totalAudioChunksSent += 1
+
+            if !self.hasLoggedFirstAudioChunk {
+                self.hasLoggedFirstAudioChunk = true
+                print("[AssemblyAI] 🔈 First audio chunk: \(audioPCM16Data.count) bytes, peak amplitude: \(peakAmplitude)")
+            }
+
             webSocketTask.send(.data(audioPCM16Data)) { [weak self] error in
                 if let error {
+                    print("[AssemblyAI] ❌ WebSocket send error: \(error.localizedDescription)")
                     self?.failSession(with: error)
                 }
             }
@@ -196,6 +213,8 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
     }
 
     func requestFinalTranscript() {
+        let audioDurationSeconds = Double(totalAudioBytesSent) / (16000.0 * 2.0)
+        print("[AssemblyAI] 📤 Requesting final transcript (chunks: \(totalAudioChunksSent), bytes: \(totalAudioBytesSent), ~\(String(format: "%.1f", audioDurationSeconds))s of audio)")
         stateQueue.async {
             guard !self.hasDeliveredFinalTranscript else { return }
             self.isAwaitingExplicitFinalTranscript = true
@@ -206,13 +225,17 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
     }
 
     func cancel() {
+        print("[AssemblyAI] 🛑 Session cancelled")
         stateQueue.async {
             self.explicitFinalTranscriptDeadlineWorkItem?.cancel()
             self.explicitFinalTranscriptDeadlineWorkItem = nil
         }
 
+        // Send Terminate and let the server close the websocket gracefully.
+        // Do NOT call webSocketTask?.cancel(with: .goingAway) — that force-kills
+        // the TCP connection and poisons the URLSession connection pool, causing
+        // "Socket is not connected" errors on subsequent sessions.
         sendJSONMessage(["type": "Terminate"])
-        webSocketTask?.cancel(with: .goingAway, reason: nil)
     }
 
     private func receiveNextMessage() {
@@ -240,6 +263,7 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
     }
 
     private func handleIncomingTextMessage(_ text: String) {
+        print("[AssemblyAI] 📩 Received message: \(text.prefix(300))")
         guard let messageData = text.data(using: .utf8) else { return }
 
         do {
@@ -247,6 +271,7 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
 
             switch envelope.type.lowercased() {
             case "begin":
+                print("[AssemblyAI] ✅ Session began")
                 resolveReadyContinuationIfNeeded(with: .success(()))
             case "turn":
                 let turnMessage = try JSONDecoder().decode(TurnMessage.self, from: messageData)
@@ -369,6 +394,11 @@ private final class AssemblyAIStreamingTranscriptionSession: NSObject, BuddyStre
         hasDeliveredFinalTranscript = true
         explicitFinalTranscriptDeadlineWorkItem?.cancel()
         explicitFinalTranscriptDeadlineWorkItem = nil
+        if transcriptText.isEmpty {
+            print("[AssemblyAI] ⚠️ Delivering empty final transcript — no speech detected")
+        } else {
+            print("[AssemblyAI] ✅ Delivering final transcript: \"\(transcriptText.prefix(80))...\"")
+        }
         onFinalTranscriptReady(transcriptText)
         sendJSONMessage(["type": "Terminate"])
     }

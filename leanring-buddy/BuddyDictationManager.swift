@@ -464,6 +464,24 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             print("🎙️ BuddyDictationManager: recognition session started")
         } catch {
             isPreparingToRecord = false
+
+            // A cancelled token fetch (NSURLErrorCancelled / -999) means the
+            // user released the push-to-talk key before the session was ready.
+            // A socket disconnection (POSIX 57) is a transient network issue
+            // from rapid reconnects — it self-heals on the next attempt.
+            // Neither is worth surfacing to the user.
+            let isCancelledByUser = (error as NSError).code == NSURLErrorCancelled
+                || error is CancellationError
+            let isTransientSocketError = (error as NSError).code == 57
+            if isCancelledByUser || isTransientSocketError {
+                let reason = isCancelledByUser
+                    ? "shortcut released during token fetch"
+                    : "transient socket error, will recover on next attempt"
+                print("🎙️ BuddyDictationManager: start cancelled (\(reason))")
+                resetSessionState()
+                return
+            }
+
             lastErrorMessage = userFacingErrorMessage(
                 from: error,
                 fallback: "couldn't start voice input. try again."
@@ -628,6 +646,8 @@ final class BuddyDictationManager: NSObject, ObservableObject {
 
     private func resetSessionState() {
         pendingStartRequestIdentifier = UUID()
+        finalizeFallbackWorkItem?.cancel()
+        finalizeFallbackWorkItem = nil
         activeTranscriptionSession = nil
         draftCallbacks = nil
         activeStartSource = nil
