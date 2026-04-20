@@ -1,170 +1,156 @@
 #!/usr/bin/env python3
 """
-Clicky Playback Engine — Run pre-recorded walkthroughs in the browser.
-Usage: python3 play.py <walkthrough_name> [--params key=value,...]
+Clicky Playback Engine — Run pre-recorded walkthroughs
+Usage: python3 play.py <walkthrough_name> [--params k=v,k=v] [--headless]
 """
-import argparse
+
 import json
-import os
-import re
-import subprocess
 import sys
+import subprocess
 import time
 from pathlib import Path
 
 WALKTHROUGH_DIR = Path(__file__).parent.parent / "walkthroughs"
-CHROME_PORT = 9222
+
 
 def load_walkthrough(name: str) -> dict:
-    for category_dir in WALKTHROUGH_DIR.iterdir():
-        if not category_dir.is_dir():
-            continue
-        clicky_file = category_dir / f"{name}.clicky"
-        if not clicky_file.exists():
-            clicky_file = category_dir / f"{name}.json"
-        if clicky_file.exists():
-            with open(clicky_file) as f:
-                return json.load(f)
-    raise FileNotFoundError(f"Walkthrough '{name}' not found in any category")
+    # Try each subdirectory
+    for subdir in WALKTHROUGH_DIR.iterdir():
+        if subdir.is_dir():
+            clicky_file = subdir / f"{name}.clicky"
+            if clicky_file.exists():
+                return json.loads(clicky_file.read_text())
+    # Try top-level
+    clicky_file = WALKTHROUGH_DIR / f"{name}.clicky"
+    if clicky_file.exists():
+        return json.loads(clicky_file.read_text())
+    raise FileNotFoundError(f"Walkthrough '{name}' not found in {WALKTHROUGH_DIR}")
 
-def substitute_params(text: str, params: dict) -> str:
-    for key, val in params.items():
-        text = text.replace(f"{{{{{key}}}}}", str(val))
-    return text
 
-def verify_step(driver, step: dict) -> bool:
+def parse_params(params_str: str | None) -> dict:
+    if not params_str:
+        return {}
+    return dict(kv.split("=", 1) for kv in params_str.split(","))
+
+
+def substitute(value: str, params: dict) -> str:
+    for k, v in params.items():
+        value = value.replace(f"{{{{{k}}}}}", v)
+    return value
+
+
+def verify_step(driver, step: dict, params: dict) -> bool:
     verify = step.get("verify", {})
-    vtype = verify.get("type")
-    value = verify.get("value", "")
-    timeout = verify.get("timeout", 5)
+    verify_type = verify.get("type", "")
+    expected = substitute(verify.get("value", ""), params)
 
-    if vtype == "url_contains":
-        import urllib.parse
-        return value in driver.current_url
-    elif vtype == "url_equals":
-        return driver.current_url == value
-    elif vtype in ("text_visible", "text_not_visible"):
-        found = value in driver.page_source
-        return found if vtype == "text_visible" else not found
-    elif vtype == "element_visible":
+    if verify_type == "url_contains":
+        return expected in driver.current_url
+    elif verify_type == "text_visible":
+        return expected in driver.page_source
+    elif verify_type == "element_visible":
         try:
-            el = driver.find_element("css selector", step.get("target", ""))
-            return el.is_displayed()
+            elem = driver.find_element("css selector", expected)
+            return elem.is_displayed()
         except Exception:
             return False
     return True
 
-def run_step(driver, step: dict, params: dict) -> bool:
-    action = step.get("action")
-    target = substitute_params(step.get("target", ""), params)
-    value = substitute_params(step.get("value", ""), params)
+
+def run_step(driver, step: dict, params: dict, browser_port: int = 9222) -> bool:
+    action = step["action"]
+    target = substitute(step.get("target", ""), params)
+    value = substitute(step.get("value", ""), params)
 
     if action == "navigate":
         driver.get(target)
     elif action == "click":
-        el = driver.find_element("css selector", target)
-        el.click()
+        driver.find_element("css selector", target).click()
     elif action == "type":
-        el = driver.find_element("css selector", target)
-        el.clear()
-        el.send_keys(value)
+        elem = driver.find_element("css selector", target)
+        elem.clear()
+        elem.send_keys(value)
     elif action == "wait":
-        time.sleep(float(step.get("seconds", 1)))
-    elif action == "select":
-        from selenium.webdriver.support.ui import Select
-        el = driver.find_element("css selector", target)
-        Select(el).select_by_value(value)
+        time.sleep(float(step.get("seconds", 2)))
     else:
-        print(f"  ⚠️  Unknown action: {action}")
-        return False
+        print(f"   ⚠️ Unknown action: {action}")
+        return True  # Don't fail on unknown actions
+
+    # Verify if present
+    if "verify" in step:
+        time.sleep(1)  # Let page settle
+        ok = verify_step(driver, step, params)
+        return ok
     return True
 
+
+def init_driver(port: int = 9222):
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+
+    opts = Options()
+    opts.add_experimental_option("debuggerAddress", f"localhost:{port}")
+    return webdriver.Chrome(options=opts)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Clicky Walkthrough Player")
-    parser.add_argument("name", help="Walkthrough name (without .clicky)")
-    parser.add_argument("--params", default="", help="params as key=value,key=value")
-    parser.add_argument("--list", action="store_true", help="List all walkthroughs")
-    parser.add_argument("--chrome-port", type=int, default=CHROME_PORT)
-    args = parser.parse_args()
+    if len(sys.argv) < 2:
+        print("Usage: play.py <walkthrough_name> [--params k=v,k=v] [--port 9222]")
+        sys.exit(1)
 
-    if args.list:
-        print("🎬 Clicky Walkthrough Library\n")
-        for cat_dir in WALKTHROUGH_DIR.iterdir():
-            if not cat_dir.is_dir():
-                continue
-            print(f"  [{cat_dir.name}/]")
-            for f in cat_dir.iterdir():
-                if f.suffix in (".clicky", ".json"):
-                    try:
-                        with open(f) as fd:
-                            d = json.load(fd)
-                            steps = len(d.get("steps", []))
-                            desc = d.get("description", "")
-                            print(f"    {f.stem}: {steps} steps — {desc}")
-                    except Exception:
-                        print(f"    {f.stem}")
-        return
+    name = sys.argv[1]
+    params_str = None
+    port = 9222
 
-    params = {}
-    if args.params:
-        for pair in args.params.split(","):
-            if "=" in pair:
-                k, v = pair.split("=", 1)
-                params[k.strip()] = v.strip()
+    for arg in sys.argv[2:]:
+        if arg.startswith("--params"):
+            params_str = arg.split("=", 1)[1] if "=" in arg else None
+        elif arg.startswith("--port"):
+            port = int(arg.split("=", 1)[1])
 
-    wt = load_walkthrough(args.name)
-    print(f"🎬 Clicky: {wt['name']}")
-    print(f"   Steps: {len(wt['steps'])}  |  Params: {params}\n")
-
-    # Try selenium
+    params = parse_params(params_str)
     try:
-        from selenium import webdriver
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.chrome.service import Service
+        walkthrough = load_walkthrough(name)
+    except FileNotFoundError as e:
+        print(f"❌ {e}")
+        sys.exit(1)
 
-        opts = Options()
-        opts.add_experimental_option("debuggerAddress", f"localhost:{args.chrome_port}")
-        driver = webdriver.Chrome(options=opts)
+    steps = walkthrough.get("steps", [])
+    print(f"🎬 Clicky: {walkthrough['name']} (v{walkthrough.get('version','1.0')})")
+    print(f"   Steps: {len(steps)}  |  Params: {params}")
+
+    try:
+        driver = init_driver(port)
     except Exception as e:
-        print(f"⚠️  Selenium not available ({e}) — dry-run mode")
-        print("   To run walkthroughs live, open Chrome with:")
-        print(f"   chrome --remote-debugging-port={args.chrome_port}")
-        print("   Then retry.\n")
-        for i, step in enumerate(wt["steps"], 1):
-            action = step.get("action")
-            target = step.get("target", "")
-            value = step.get("value", "")
-            print(f"  {i}. [{action}] {target} {value}")
-        return
+        print(f"❌ Failed to connect to Chrome on port {port}: {e}")
+        print(f"   Start Chrome with: chrome --remote-debugging-port={port}")
+        sys.exit(1)
 
     passed = 0
-    for step in wt["steps"]:
-        sid = step.get("id", "?")
-        action = step.get("action")
-        target = step.get("target", "")
-        value = step.get("value", "")
-        desc = step.get("description", "")
+    failed = 0
 
-        print(f"  {sid}. {action} → {target} {value or ''}")
-        try:
-            ok = run_step(driver, step, params)
-            if not ok:
-                print(f"     ❌ Action failed")
-                break
-            time.sleep(0.3)
-            if verify_step(driver, step):
-                print(f"     ✅ OK")
-                passed += 1
-            else:
-                print(f"     ❌ Verify failed — stopping")
-                break
-        except Exception as e:
-            print(f"     ❌ Error: {e}")
+    for i, step in enumerate(steps, 1):
+        step_id = step.get("id", i)
+        action = step.get("action", "unknown")
+        target = step.get("target", step.get("value", ""))
+        print(f"\n  {i}. [{action.upper()}] {target[:60]}")
+
+        ok = run_step(driver, step, params, port)
+        if ok:
+            print(f"     ✅ Step passed")
+            passed += 1
+        else:
+            print(f"     ❌ VERIFY FAILED — stopping")
+            failed += 1
             break
 
     driver.quit()
-    print(f"\n✅ {passed}/{len(wt['steps'])} steps passed")
+    print(f"\n{'='*40}")
+    print(f"Results: {passed} passed, {failed} failed")
+
+    if failed > 0:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,44 @@
+#!/bin/bash
+# Install a skill from the registry or a git URL
+# Usage: install-skill <slug> [git-url]
+# If no git-url provided, installs from the Zo skills registry.
+
+set -e
+
+SLUG="${1:-}"
+DEST_DIR="$(dirname "$0")/../$SLUG"
+
+if [ -z "$SLUG" ]; then
+  echo "Usage: install-skill <slug> [git-url]"
+  exit 1
+fi
+
+if [ -d "$DEST_DIR" ]; then
+  echo "Skill already exists: $SLUG"
+  exit 1
+fi
+
+if [ -n "${2:-}" ]; then
+  # Install from git URL
+  GIT_URL="$2"
+  echo "Installing $SLUG from git..."
+  git clone "$GIT_URL" "$DEST_DIR"
+else
+  # Install from Zo registry
+  MANIFEST_URL="https://raw.githubusercontent.com/zocomputer/skills/main/manifest.json"
+  echo "Fetching registry manifest..."
+  
+  TARBALL_URL=$(curl -fsSL "$MANIFEST_URL" | jq -r ".tarball_url")
+  ARCHIVE_ROOT=$(curl -fsSL "$MANIFEST_URL" | jq -r ".archive_root")
+  
+  if [ -z "$TARBALL_URL" ] || [ "$TARBALL_URL" = "null" ]; then
+    echo "Skill not found in registry: $SLUG"
+    exit 1
+  fi
+  
+  echo "Downloading $SLUG..."
+  curl -L "$TARBALL_URL" | tar -xz -C "$(dirname "$DEST_DIR")" --strip-components=1 --transform="s|^$ARCHIVE_ROOT/$SLUG|$SLUG|"
+fi
+
+echo "✓ $SLUG installed"
+ls -la "$DEST_DIR/"

@@ -1,0 +1,20 @@
+{
+  "idea_name": "FakerFaker",
+  "idea_desc": "Facebook scam detector - paste profile link, get scam analysis",
+  "session_id": "orch-fakerfaker-1776358310",
+  "started_at": "2026-04-16T16:52:55.371092",
+  "tracks": [
+    "build",
+    "marketing"
+  ],
+  "children": [
+    {
+      "error": "HTTPSConnectionPool(host='api.zo.computer', port=443): Read timed out. (read timeout=30)",
+      "track": "build"
+    },
+    {
+      "error": "HTTPSConnectionPool(host='api.zo.computer', port=443): Read timed out. (read timeout=30)",
+      "track": "marketing"
+    }
+  ]
+}

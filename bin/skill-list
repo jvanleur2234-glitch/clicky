@@ -1,0 +1,20 @@
+#!/bin/bash
+# List all installed skills
+# Usage: skill-list
+
+SKILLS_DIR="$(dirname "$0")/.."
+
+echo "Installed skills:"
+echo ""
+
+for dir in "$SKILLS_DIR"/*/; do
+  SKILL_NAME="$(basename "$dir")"
+  SKILL_FILE="$dir/SKILL.md"
+  
+  if [ -f "$SKILL_FILE" ]; then
+    # Extract name and description from frontmatter
+    NAME=$(awk -F': ' '/^name:/{print $2; exit}' "$SKILL_FILE")
+    DESC=$(awk -F': ' '/^description:/{print $2; exit}' "$SKILL_FILE")
+    echo "  $SKILL_NAME — $DESC"
+  fi
+done

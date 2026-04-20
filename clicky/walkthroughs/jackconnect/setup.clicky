@@ -1,67 +1,88 @@
 {
   "name": "jackconnect-setup",
   "version": "1.0",
-  "description": "Install JackConnect and connect core services (Solomon OS brain, Ollama, Russell Tuna)",
+  "description": "Set up JackConnect for a new real estate client — install services and connect integrations",
   "author": "Solomon OS",
   "created": "2026-04-20",
   "params": {
-    "ollama_host": "http://localhost:11434",
-    "solomon_port": "5010"
+    "client_name": "Acme Realty",
+    "client_email": "client@acme.com",
+    "domain": "acme.realty"
   },
   "steps": [
     {
       "id": 1,
       "action": "navigate",
-      "target": "http://localhost:3099/jackconnect",
-      "verify": {
-        "type": "url_contains",
-        "value": "/jackconnect"
-      }
+      "target": "https://jackconnect.solomon.os/setup",
+      "verify": { "type": "url_contains", "value": "/setup" }
     },
     {
       "id": 2,
       "action": "click",
-      "target": "#install-btn",
-      "verify": {
-        "type": "text_visible",
-        "value": "Installing"
-      }
+      "target": "#start-wizard",
+      "verify": { "type": "text_visible", "value": "New Client Setup" }
     },
     {
       "id": 3,
-      "action": "wait",
-      "seconds": 3,
-      "verify": {
-        "type": "text_visible",
-        "value": "Ollama"
-      }
+      "action": "type",
+      "target": "#client-name",
+      "value": "{{client_name}}",
+      "verify": { "type": "text_visible", "value": "{{client_name}}" }
     },
     {
       "id": 4,
-      "action": "click",
-      "target": "#connect-ollama",
-      "verify": {
-        "type": "text_visible",
-        "value": "Connected"
-      }
+      "action": "type",
+      "target": "#client-email",
+      "value": "{{client_email}}",
+      "verify": { "type": "text_visible", "value": "{{client_email}}" }
     },
     {
       "id": 5,
       "action": "click",
-      "target": "#connect-solomon",
-      "verify": {
-        "type": "text_visible",
-        "value": "Brain connected"
-      }
+      "target": "#continue-btn",
+      "verify": { "type": "text_visible", "value": "Connect Services" }
     },
     {
       "id": 6,
       "action": "click",
-      "target": "#test-russell",
-      "verify": {
-        "type": "text_visible",
-        "value": "Russell Tuna"
-      }
+      "target": "#toggle-ollama",
+      "verify": { "type": "text_visible", "value": "Ollama Connected" }
+    },
+    {
+      "id": 7,
+      "action": "click",
+      "target": "#toggle-groq",
+      "verify": { "type": "text_visible", "value": "Groq Connected" }
+    },
+    {
+      "id": 8,
+      "action": "click",
+      "target": "#continue-btn",
+      "verify": { "type": "text_visible", "value": "Assign Workers" }
+    },
+    {
+      "id": 9,
+      "action": "click",
+      "target": "#worker-russell-tuna",
+      "verify": { "type": "element_visible", "value": "#worker-selected" }
+    },
+    {
+      "id": 10,
+      "action": "click",
+      "target": "#worker-hermes",
+      "verify": { "type": "element_visible", "value": "#worker-selected" }
+    },
+    {
+      "id": 11,
+      "action": "click",
+      "target": "#deploy-btn",
+      "verify": { "type": "text_visible", "value": "Deployed" }
+    },
+    {
+      "id": 12,
+      "action": "wait",
+      "seconds": 5,
+      "verify": { "type": "text_visible", "value": "Client Ready" }
     }
   ]
 }

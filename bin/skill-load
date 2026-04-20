@@ -1,0 +1,40 @@
+#!/bin/bash
+# Skill Loader — reads a SKILL.md and outputs how to run the skill
+# Usage: skill-load <skill-name>
+
+set -e
+
+SKILL_NAME="${1:-}"
+SKILL_DIR="$(dirname "$0")/../$SKILL_NAME"
+
+if [ -z "$SKILL_NAME" ]; then
+  echo "Usage: skill-load <skill-name>"
+  exit 1
+fi
+
+SKILL_FILE="$SKILL_DIR/SKILL.md"
+
+if [ ! -f "$SKILL_FILE" ]; then
+  echo "Skill not found: $SKILL_NAME"
+  echo "Run 'skill-list' to see available skills."
+  exit 1
+fi
+
+echo "=== $SKILL_NAME ==="
+echo ""
+
+# Read frontmatter
+while IFS= read -r line; do
+  [[ "$line" =~ ^---$ ]] && break
+  echo "$line"
+done < "$SKILL_FILE"
+
+echo ""
+echo "--- Instructions ---"
+
+# Read body (after first ---)
+in_body=false
+while IFS= read -r line; do
+  $in_body && echo "$line"
+  [[ "$line" =~ ^---$ ]] && in_body=true
+done < "$SKILL_FILE"
