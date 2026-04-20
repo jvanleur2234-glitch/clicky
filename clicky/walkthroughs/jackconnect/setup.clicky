@@ -1,0 +1,67 @@
+{
+  "name": "jackconnect-setup",
+  "version": "1.0",
+  "description": "Install JackConnect and connect core services (Solomon OS brain, Ollama, Russell Tuna)",
+  "author": "Solomon OS",
+  "created": "2026-04-20",
+  "params": {
+    "ollama_host": "http://localhost:11434",
+    "solomon_port": "5010"
+  },
+  "steps": [
+    {
+      "id": 1,
+      "action": "navigate",
+      "target": "http://localhost:3099/jackconnect",
+      "verify": {
+        "type": "url_contains",
+        "value": "/jackconnect"
+      }
+    },
+    {
+      "id": 2,
+      "action": "click",
+      "target": "#install-btn",
+      "verify": {
+        "type": "text_visible",
+        "value": "Installing"
+      }
+    },
+    {
+      "id": 3,
+      "action": "wait",
+      "seconds": 3,
+      "verify": {
+        "type": "text_visible",
+        "value": "Ollama"
+      }
+    },
+    {
+      "id": 4,
+      "action": "click",
+      "target": "#connect-ollama",
+      "verify": {
+        "type": "text_visible",
+        "value": "Connected"
+      }
+    },
+    {
+      "id": 5,
+      "action": "click",
+      "target": "#connect-solomon",
+      "verify": {
+        "type": "text_visible",
+        "value": "Brain connected"
+      }
+    },
+    {
+      "id": 6,
+      "action": "click",
+      "target": "#test-russell",
+      "verify": {
+        "type": "text_visible",
+        "value": "Russell Tuna"
+      }
+    }
+  ]
+}

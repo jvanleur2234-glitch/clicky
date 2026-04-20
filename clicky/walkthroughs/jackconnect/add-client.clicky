@@ -1,0 +1,70 @@
+{
+  "name": "jackconnect-add-client",
+  "version": "1.0",
+  "description": "Onboard a new real estate client into JackConnect",
+  "author": "Solomon OS",
+  "created": "2026-04-20",
+  "params": {
+    "client_name": "",
+    "client_email": "",
+    "client_type": "buyer"
+  },
+  "steps": [
+    {
+      "id": 1,
+      "action": "navigate",
+      "target": "http://localhost:3099/jackconnect/clients",
+      "verify": {
+        "type": "url_contains",
+        "value": "/clients"
+      }
+    },
+    {
+      "id": 2,
+      "action": "click",
+      "target": "#add-client-btn",
+      "verify": {
+        "type": "text_visible",
+        "value": "New Client"
+      }
+    },
+    {
+      "id": 3,
+      "action": "type",
+      "target": "#client-name-input",
+      "value": "{{client_name}}",
+      "verify": {
+        "type": "text_visible",
+        "value": "{{client_name}}"
+      }
+    },
+    {
+      "id": 4,
+      "action": "type",
+      "target": "#client-email-input",
+      "value": "{{client_email}}",
+      "verify": {
+        "type": "text_visible",
+        "value": "{{client_email}}"
+      }
+    },
+    {
+      "id": 5,
+      "action": "click",
+      "target": "#client-type-{{client_type}}",
+      "verify": {
+        "type": "element_visible",
+        "value": "#client-type-buyer"
+      }
+    },
+    {
+      "id": 6,
+      "action": "click",
+      "target": "#save-client-btn",
+      "verify": {
+        "type": "text_visible",
+        "value": "Client added"
+      }
+    }
+  ]
+}

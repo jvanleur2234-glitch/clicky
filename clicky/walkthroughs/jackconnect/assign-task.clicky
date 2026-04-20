@@ -1,0 +1,71 @@
+{
+  "name": "jackconnect-assign-task",
+  "version": "1.0",
+  "description": "Assign a task to an AI worker for a client",
+  "author": "Solomon OS",
+  "created": "2026-04-20",
+  "params": {
+    "client_name": "",
+    "task_type": "cma",
+    "worker": "russell-tuna"
+  },
+  "steps": [
+    {
+      "id": 1,
+      "action": "navigate",
+      "target": "http://localhost:3099/jackconnect/tasks",
+      "verify": {
+        "type": "url_contains",
+        "value": "/tasks"
+      }
+    },
+    {
+      "id": 2,
+      "action": "click",
+      "target": "#new-task-btn",
+      "verify": {
+        "type": "text_visible",
+        "value": "New Task"
+      }
+    },
+    {
+      "id": 3,
+      "action": "select",
+      "target": "#client-select",
+      "value": "{{client_name}}",
+      "verify": {
+        "type": "text_visible",
+        "value": "{{client_name}}"
+      }
+    },
+    {
+      "id": 4,
+      "action": "select",
+      "target": "#task-type-select",
+      "value": "{{task_type}}",
+      "verify": {
+        "type": "text_visible",
+        "value": "{{task_type}}"
+      }
+    },
+    {
+      "id": 5,
+      "action": "select",
+      "target": "#worker-select",
+      "value": "{{worker}}",
+      "verify": {
+        "type": "text_visible",
+        "value": "{{worker}}"
+      }
+    },
+    {
+      "id": 6,
+      "action": "click",
+      "target": "#assign-task-btn",
+      "verify": {
+        "type": "text_visible",
+        "value": "Task assigned"
+      }
+    }
+  ]
+}
